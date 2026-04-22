@@ -161,7 +161,8 @@
                     
                     // Auto-answer incoming calls from the door phone
                     session.answer({
-                        mediaConstraints: { audio: true, video: true }
+                        mediaConstraints: { audio: true, video: true },
+                        pcConfig: { iceServers: [] }
                     });
 
                     handleSession(session);
@@ -182,7 +183,8 @@
             }
             
             const options = {
-                mediaConstraints: { audio: true, video: true }
+                mediaConstraints: { audio: true, video: true },
+                pcConfig: { iceServers: [] }
             };
 
             const session = ua.call(`sip:${TARGET_EXT}@${SERVER_IP}`, options);
@@ -213,6 +215,17 @@
 
         function handleSession(session) {
             activeSession = session;
+
+            // Prevent Asterisk Rx buffer overflow by stripping massive SDP lines (WebRTC specific lines)
+            session.on('sdp', (data) => {
+                if (data.originator === 'local') {
+                    // Remove all a=extmap and a=rtcp-fb lines which bloat the SDP
+                    data.sdp = data.sdp.replace(/^a=extmap:.*\r\n/gm, '');
+                    data.sdp = data.sdp.replace(/^a=rtcp-fb:.*\r\n/gm, '');
+                    // Also remove rtcp-mux and rtcp-rsize if they are causing size issues, but usually extmap is enough.
+                    console.log('Stripped local SDP to prevent Asterisk buffer overflow.');
+                }
+            });
 
             session.on('progress', () => { statusEl.textContent = 'Ringing...'; });
             session.on('confirmed', () => {
