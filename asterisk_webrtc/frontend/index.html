@@ -216,14 +216,57 @@
         function handleSession(session) {
             activeSession = session;
 
-            // Prevent Asterisk Rx buffer overflow by stripping massive SDP lines (WebRTC specific lines)
+            // Aggressively strip SDP to prevent Asterisk PJSIP Rx buffer overflow (4000 byte limit)
             session.on('sdp', (data) => {
                 if (data.originator === 'local') {
-                    // Remove all a=extmap and a=rtcp-fb lines which bloat the SDP
-                    data.sdp = data.sdp.replace(/^a=extmap:.*\r\n/gm, '');
-                    data.sdp = data.sdp.replace(/^a=rtcp-fb:.*\r\n/gm, '');
-                    // Also remove rtcp-mux and rtcp-rsize if they are causing size issues, but usually extmap is enough.
-                    console.log('Stripped local SDP to prevent Asterisk buffer overflow.');
+                    let lines = data.sdp.split('\r\n');
+                    let allowedPts = new Set();
+                    
+                    // Pass 1: Find payload types we want to KEEP
+                    for (let line of lines) {
+                        if (line.startsWith('a=rtpmap:')) {
+                            let pt = line.split(' ')[0].split(':')[1];
+                            // Keep basic audio (Opus, PCMU, PCMA, dtmf) and basic video (VP8, H264)
+                            if (line.includes('opus/') || line.includes('PCMU/') || line.includes('PCMA/') || 
+                                line.includes('telephone-event/') || line.includes('VP8/') || 
+                                (line.includes('H264/') && !line.includes('rtx'))) {
+                                allowedPts.add(pt);
+                            }
+                        }
+                    }
+
+                    let newLines = [];
+                    // Pass 2: Rebuild SDP with only kept payload types and without bloat
+                    for (let line of lines) {
+                        if (!line) continue; // skip empty lines during processing
+                        
+                        // Strip WebRTC bloat
+                        if (line.startsWith('a=extmap:')) continue;
+                        if (line.startsWith('a=rtcp-fb:')) continue;
+                        if (line.startsWith('a=msid-semantic:')) continue;
+                        
+                        // Strip unsupported payload types from rtpmap and fmtp
+                        if (line.startsWith('a=rtpmap:') || line.startsWith('a=fmtp:')) {
+                            let pt = line.split(' ')[0].split(':')[1];
+                            if (!allowedPts.has(pt)) continue;
+                        }
+                        
+                        // Strip unsupported payload types from m= lines
+                        if (line.startsWith('m=audio') || line.startsWith('m=video')) {
+                            let parts = line.split(' ');
+                            let newParts = parts.slice(0, 3); // m=type port protocol
+                            for (let i = 3; i < parts.length; i++) {
+                                if (allowedPts.has(parts[i])) {
+                                    newParts.push(parts[i]);
+                                }
+                            }
+                            line = newParts.join(' ');
+                        }
+                        newLines.push(line);
+                    }
+                    // Re-join with exact CRLF
+                    data.sdp = newLines.join('\r\n') + '\r\n';
+                    console.log('Stripped local SDP size:', data.sdp.length, 'bytes');
                 }
             });
 
