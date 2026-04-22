@@ -107,7 +107,7 @@
         
         // Hardcoded values
         const SERVER_IP = '192.168.2.25';
-        const TARGET_EXT = '100';
+        const TARGET_EXT = '101'; // updated to ring group as requested
 
         function initSIP() {
             try {
@@ -159,6 +159,8 @@
 
                     console.log('Incoming call from: ', session.remote_identity.uri.toString());
                     
+                    session.on('sdp', stripSDP);
+
                     // Auto-answer incoming calls from the door phone
                     session.answer({
                         mediaConstraints: { audio: true, video: true },
@@ -184,7 +186,10 @@
             
             const options = {
                 mediaConstraints: { audio: true, video: true },
-                pcConfig: { iceServers: [] }
+                pcConfig: { iceServers: [] },
+                eventHandlers: {
+                    'sdp': stripSDP
+                }
             };
 
             const session = ua.call(`sip:${TARGET_EXT}@${SERVER_IP}`, options);
@@ -213,62 +218,61 @@
             }
         });
 
+        function stripSDP(data) {
+            if (data.originator === 'local') {
+                let lines = data.sdp.split('\r\n');
+                let allowedPts = new Set();
+                
+                // Pass 1: Find payload types we want to KEEP
+                for (let line of lines) {
+                    if (line.startsWith('a=rtpmap:')) {
+                        let pt = line.split(' ')[0].split(':')[1];
+                        // Keep basic audio (Opus, PCMU, PCMA, dtmf) and basic video (VP8, H264)
+                        if (line.includes('opus/') || line.includes('PCMU/') || line.includes('PCMA/') || 
+                            line.includes('telephone-event/') || line.includes('VP8/') || 
+                            (line.includes('H264/') && !line.includes('rtx'))) {
+                            allowedPts.add(pt);
+                        }
+                    }
+                }
+
+                let newLines = [];
+                // Pass 2: Rebuild SDP with only kept payload types and without bloat
+                for (let line of lines) {
+                    if (!line) continue; // skip empty lines during processing
+                    
+                    // Strip WebRTC bloat
+                    if (line.startsWith('a=extmap:')) continue;
+                    if (line.startsWith('a=rtcp-fb:')) continue;
+                    if (line.startsWith('a=msid-semantic:')) continue;
+                    
+                    // Strip unsupported payload types from rtpmap and fmtp
+                    if (line.startsWith('a=rtpmap:') || line.startsWith('a=fmtp:')) {
+                        let pt = line.split(' ')[0].split(':')[1];
+                        if (!allowedPts.has(pt)) continue;
+                    }
+                    
+                    // Strip unsupported payload types from m= lines
+                    if (line.startsWith('m=audio') || line.startsWith('m=video')) {
+                        let parts = line.split(' ');
+                        let newParts = parts.slice(0, 3); // m=type port protocol
+                        for (let i = 3; i < parts.length; i++) {
+                            if (allowedPts.has(parts[i])) {
+                                newParts.push(parts[i]);
+                            }
+                        }
+                        line = newParts.join(' ');
+                    }
+                    newLines.push(line);
+                }
+                // Re-join with exact CRLF
+                data.sdp = newLines.join('\r\n') + '\r\n';
+                console.log('Stripped local SDP size:', data.sdp.length, 'bytes');
+            }
+        }
+
         function handleSession(session) {
             activeSession = session;
-
-            // Aggressively strip SDP to prevent Asterisk PJSIP Rx buffer overflow (4000 byte limit)
-            session.on('sdp', (data) => {
-                if (data.originator === 'local') {
-                    let lines = data.sdp.split('\r\n');
-                    let allowedPts = new Set();
-                    
-                    // Pass 1: Find payload types we want to KEEP
-                    for (let line of lines) {
-                        if (line.startsWith('a=rtpmap:')) {
-                            let pt = line.split(' ')[0].split(':')[1];
-                            // Keep basic audio (Opus, PCMU, PCMA, dtmf) and basic video (VP8, H264)
-                            if (line.includes('opus/') || line.includes('PCMU/') || line.includes('PCMA/') || 
-                                line.includes('telephone-event/') || line.includes('VP8/') || 
-                                (line.includes('H264/') && !line.includes('rtx'))) {
-                                allowedPts.add(pt);
-                            }
-                        }
-                    }
-
-                    let newLines = [];
-                    // Pass 2: Rebuild SDP with only kept payload types and without bloat
-                    for (let line of lines) {
-                        if (!line) continue; // skip empty lines during processing
-                        
-                        // Strip WebRTC bloat
-                        if (line.startsWith('a=extmap:')) continue;
-                        if (line.startsWith('a=rtcp-fb:')) continue;
-                        if (line.startsWith('a=msid-semantic:')) continue;
-                        
-                        // Strip unsupported payload types from rtpmap and fmtp
-                        if (line.startsWith('a=rtpmap:') || line.startsWith('a=fmtp:')) {
-                            let pt = line.split(' ')[0].split(':')[1];
-                            if (!allowedPts.has(pt)) continue;
-                        }
-                        
-                        // Strip unsupported payload types from m= lines
-                        if (line.startsWith('m=audio') || line.startsWith('m=video')) {
-                            let parts = line.split(' ');
-                            let newParts = parts.slice(0, 3); // m=type port protocol
-                            for (let i = 3; i < parts.length; i++) {
-                                if (allowedPts.has(parts[i])) {
-                                    newParts.push(parts[i]);
-                                }
-                            }
-                            line = newParts.join(' ');
-                        }
-                        newLines.push(line);
-                    }
-                    // Re-join with exact CRLF
-                    data.sdp = newLines.join('\r\n') + '\r\n';
-                    console.log('Stripped local SDP size:', data.sdp.length, 'bytes');
-                }
-            });
 
             session.on('progress', () => { statusEl.textContent = 'Ringing...'; });
             session.on('confirmed', () => {
