@@ -1,6 +1,6 @@
 name: "Asterisk WebRTC SIP Bridge"
 description: "Asterisk PBX configured for SIP to WebRTC bridging for Door Phones."
-version: "1.1.5"
+version: "1.1.6"
 slug: "asterisk_webrtc"
 init: false
 arch:
