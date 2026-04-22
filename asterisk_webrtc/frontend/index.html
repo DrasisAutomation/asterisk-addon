@@ -127,8 +127,8 @@
 
         // Auto-initialize on load
         window.onload = () => {
-            // Default to the Home Assistant IP
-            sipServerInput.value = window.location.hostname;
+            // Hardcoded to Home Assistant IP per user request
+            sipServerInput.value = '192.168.2.25';
             // Auto connect
             initSIP();
         };
