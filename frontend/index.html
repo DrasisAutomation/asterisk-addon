@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Door Phone Interface</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jssip/3.10.0/jssip.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e1e;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+            margin: 0;
+        }
+        h1 { margin-bottom: 0.5rem; }
+        .status { padding: 10px; margin-bottom: 20px; border-radius: 5px; background: #333; font-weight: bold; }
+        .status.connected { color: #4ade80; }
+        .status.disconnected { color: #f87171; }
+        
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            margin-bottom: 20px;
+            aspect-ratio: 16/9;
+        }
+        
+        video#remoteVideo {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        video#localVideo {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            width: 120px;
+            border-radius: 5px;
+            border: 2px solid white;
+            background: #222;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .call-btn { background: #4ade80; color: #1e1e1e; }
+        .call-btn:hover { background: #22c55e; }
+        .end-btn { background: #f87171; color: white; }
+        .end-btn:hover { background: #ef4444; }
+        .unlock-btn { background: #3b82f6; color: white; }
+        .unlock-btn:hover { background: #2563eb; }
+
+        .config {
+            background: #2d2d2d;
+            padding: 20px;
+            border-radius: 10px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .config input {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #555;
+            background: #1e1e1e;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>SIP Door Phone Monitor</h1>
+    <div id="status" class="status disconnected">Disconnected</div>
+
+    <div class="video-container">
+        <!-- Remote Video (Door Phone) -->
+        <video id="remoteVideo" autoplay playsinline></video>
+        <!-- Local Video (PC Camera) -->
+        <video id="localVideo" autoplay playsinline muted></video>
+    </div>
+
+    <div class="controls">
+        <button id="callBtn" class="call-btn">Call Door Phone</button>
+        <button id="endBtn" class="end-btn" style="display: none;">End Call</button>
+        <button id="unlockBtn" class="unlock-btn" style="display: none;">Unlock Door (DTMF 1)</button>
+    </div>
+
+    <div class="config">
+        <input type="text" id="sipServer" value="192.168.2.203" placeholder="Asterisk IP (e.g. 192.168.2.203)">
+        <input type="text" id="targetExt" value="100" placeholder="Door Phone Extension (e.g. 100)">
+        <button onclick="initSIP()" style="padding: 8px 16px; background: #6b7280; color: white;">Connect to Server</button>
+    </div>
+
+    <script>
+        let ua = null;
+        let activeSession = null;
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const statusEl = document.getElementById('status');
+        const callBtn = document.getElementById('callBtn');
+        const endBtn = document.getElementById('endBtn');
+        const unlockBtn = document.getElementById('unlockBtn');
+
+        // Note: Browsers require HTTPS to access camera/microphone!
+        // If testing on HTTP, it must be on localhost.
+
+        function initSIP() {
+            if (ua) { ua.stop(); }
+
+            const serverIp = document.getElementById('sipServer').value;
+            // From Asterisk config: WebRTC Endpoint is 200, Password is webrtc
+            const socket = new JsSIP.WebSocketInterface(`ws://${serverIp}:8088/ws`);
+            
+            const configuration = {
+                sockets: [socket],
+                uri: `sip:200@${serverIp}`,
+                password: 'webrtc',
+                // WebRTC requires register to receive incoming calls
+                register: true,
+                session_timers: false
+            };
+
+            ua = new JsSIP.UA(configuration);
+
+            ua.on('connected', () => {
+                statusEl.textContent = 'Connected to Server';
+                statusEl.className = 'status connected';
+            });
+
+            ua.on('disconnected', () => {
+                statusEl.textContent = 'Disconnected';
+                statusEl.className = 'status disconnected';
+            });
+
+            ua.on('registered', () => {
+                statusEl.textContent = 'Registered (Ready to Call)';
+            });
+
+            // Handle Incoming Calls
+            ua.on('newRTCSession', (data) => {
+                const session = data.session;
+                
+                if (data.originator === 'local') return;
+
+                console.log('Incoming call from: ', session.remote_identity.uri.toString());
+                
+                // Auto-answer incoming calls from the door phone
+                session.answer({
+                    mediaConstraints: { audio: true, video: true }
+                });
+
+                handleSession(session);
+            });
+
+            ua.start();
+        }
+
+        callBtn.addEventListener('click', () => {
+            if (!ua) {
+                alert('Please connect to the server first!');
+                return;
+            }
+
+            const targetExt = document.getElementById('targetExt').value;
+            const serverIp = document.getElementById('sipServer').value;
+            
+            const options = {
+                mediaConstraints: { audio: true, video: true }
+            };
+
+            const session = ua.call(`sip:${targetExt}@${serverIp}`, options);
+            handleSession(session);
+        });
+
+        endBtn.addEventListener('click', () => {
+            if (activeSession) {
+                activeSession.terminate();
+            }
+        });
+
+        unlockBtn.addEventListener('click', () => {
+            if (activeSession) {
+                // Send DTMF '1' to unlock the door
+                activeSession.sendDTMF('1');
+                console.log('DTMF 1 sent to unlock door');
+                
+                // Visual feedback
+                unlockBtn.textContent = 'Unlocked!';
+                unlockBtn.style.background = '#22c55e';
+                setTimeout(() => {
+                    unlockBtn.textContent = 'Unlock Door (DTMF 1)';
+                    unlockBtn.style.background = '#3b82f6';
+                }, 2000);
+            }
+        });
+
+        function handleSession(session) {
+            activeSession = session;
+
+            session.on('progress', () => { statusEl.textContent = 'Ringing...'; });
+            session.on('confirmed', () => {
+                statusEl.textContent = 'Call Connected';
+                callBtn.style.display = 'none';
+                endBtn.style.display = 'inline-block';
+                unlockBtn.style.display = 'inline-block';
+                
+                // Get Local Stream
+                const localStream = session.connection.getLocalStreams()[0];
+                if (localStream) {
+                    localVideo.srcObject = localStream;
+                }
+            });
+
+            session.on('ended', () => resetCallUI('Call Ended'));
+            session.on('failed', () => resetCallUI('Call Failed'));
+
+            // Handle Remote Stream (Video/Audio from Door Phone)
+            session.on('peerconnection', (e) => {
+                e.peerconnection.addEventListener('track', (event) => {
+                    if (event.streams && event.streams[0]) {
+                        remoteVideo.srcObject = event.streams[0];
+                    } else {
+                        const inboundStream = new MediaStream([event.track]);
+                        remoteVideo.srcObject = inboundStream;
+                    }
+                });
+            });
+        }
+
+        function resetCallUI(msg) {
+            activeSession = null;
+            statusEl.textContent = msg;
+            setTimeout(() => {
+                if(ua && ua.isRegistered()) statusEl.textContent = 'Registered (Ready to Call)';
+            }, 3000);
+            
+            callBtn.style.display = 'inline-block';
+            endBtn.style.display = 'none';
+            unlockBtn.style.display = 'none';
+            localVideo.srcObject = null;
+            remoteVideo.srcObject = null;
+        }
+
+    </script>
+</body>
+</html>
