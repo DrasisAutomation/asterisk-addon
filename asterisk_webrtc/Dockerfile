@@ -4,6 +4,7 @@ FROM $BUILD_FROM
 # Install Asterisk and necessary modules
 RUN apk add --no-cache \
     asterisk \
+    asterisk-sample-config \
     asterisk-srtp \
     asterisk-speex \
     bash \
