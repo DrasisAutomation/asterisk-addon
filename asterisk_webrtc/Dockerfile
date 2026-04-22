@@ -8,9 +8,11 @@ RUN apk add --no-cache \
     asterisk-srtp \
     asterisk-speex \
     bash \
-    tzdata
+    tzdata \
+    python3
 
-# Copy configuration files
+# Copy frontend and configurations
+COPY frontend/ /frontend/
 COPY asterisk/ /etc/asterisk/
 COPY run.sh /
 
