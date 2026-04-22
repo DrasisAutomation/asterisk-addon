@@ -1,0 +1,25 @@
+name: "Asterisk WebRTC SIP Bridge"
+description: "Asterisk PBX configured for SIP to WebRTC bridging for Door Phones."
+version: "1.0.0"
+slug: "asterisk_webrtc"
+init: false
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+startup: application
+boot: auto
+map:
+  - config:rw
+options: {}
+schema: {}
+ports:
+  5060/udp: 5060
+  8088/tcp: 8088
+  10000-10100/udp: 10000-10100
+ports_description:
+  5060/udp: "SIP UDP port for door phone"
+  8088/tcp: "WebSocket port for WebRTC clients"
+  10000-10100/udp: "RTP media ports"
