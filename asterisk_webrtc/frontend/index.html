@@ -123,14 +123,20 @@
         const callBtn = document.getElementById('callBtn');
         const endBtn = document.getElementById('endBtn');
         const unlockBtn = document.getElementById('unlockBtn');
+        const sipServerInput = document.getElementById('sipServer');
 
-        // Note: Browsers require HTTPS to access camera/microphone!
-        // If testing on HTTP, it must be on localhost.
+        // Auto-initialize on load
+        window.onload = () => {
+            // Default to the Home Assistant IP
+            sipServerInput.value = window.location.hostname;
+            // Auto connect
+            initSIP();
+        };
 
         function initSIP() {
             if (ua) { ua.stop(); }
 
-            const serverIp = document.getElementById('sipServer').value;
+            const serverIp = sipServerInput.value;
             // From Asterisk config: WebRTC Endpoint is 200, Password is webrtc
             const socket = new JsSIP.WebSocketInterface(`ws://${serverIp}:8088/ws`);
             
@@ -185,7 +191,7 @@
             }
 
             const targetExt = document.getElementById('targetExt').value;
-            const serverIp = document.getElementById('sipServer').value;
+            const serverIp = sipServerInput.value;
             
             const options = {
                 mediaConstraints: { audio: true, video: true }
