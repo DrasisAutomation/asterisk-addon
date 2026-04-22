@@ -15,11 +15,4 @@ map:
   - config:rw
 options: {}
 schema: {}
-ports:
-  5060/udp: 5060
-  8088/tcp: 8088
-  10000-10100/udp: 10000-10100
-ports_description:
-  5060/udp: "SIP UDP port for door phone"
-  8088/tcp: "WebSocket port for WebRTC clients"
-  10000-10100/udp: "RTP media ports"
+host_network: true
