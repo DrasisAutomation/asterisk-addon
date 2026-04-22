@@ -73,27 +73,14 @@
         .unlock-btn:hover { background: #2563eb; }
 
         .config {
-            background: #2d2d2d;
-            padding: 20px;
-            border-radius: 10px;
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-        .config input {
-            padding: 8px;
-            border-radius: 4px;
-            border: 1px solid #555;
-            background: #1e1e1e;
-            color: white;
+            display: none; /* Hidden as per user request */
         }
     </style>
 </head>
 <body>
 
     <h1>SIP Door Phone Monitor</h1>
-    <div id="status" class="status disconnected">Disconnected</div>
+    <div id="status" class="status disconnected">Connecting...</div>
 
     <div class="video-container">
         <!-- Remote Video (Door Phone) -->
@@ -108,12 +95,6 @@
         <button id="unlockBtn" class="unlock-btn" style="display: none;">Unlock Door (DTMF 1)</button>
     </div>
 
-    <div class="config">
-        <input type="text" id="sipServer" value="192.168.2.203" placeholder="Asterisk IP (e.g. 192.168.2.203)">
-        <input type="text" id="targetExt" value="100" placeholder="Door Phone Extension (e.g. 100)">
-        <button onclick="initSIP()" style="padding: 8px 16px; background: #6b7280; color: white;">Connect to Server</button>
-    </div>
-
     <script>
         let ua = null;
         let activeSession = null;
@@ -123,81 +104,88 @@
         const callBtn = document.getElementById('callBtn');
         const endBtn = document.getElementById('endBtn');
         const unlockBtn = document.getElementById('unlockBtn');
-        const sipServerInput = document.getElementById('sipServer');
-
-        // Auto-initialize on load
-        window.onload = () => {
-            // Hardcoded to Home Assistant IP per user request
-            sipServerInput.value = '192.168.2.25';
-            // Auto connect
-            initSIP();
-        };
+        
+        // Hardcoded values
+        const SERVER_IP = '192.168.2.25';
+        const TARGET_EXT = '100';
 
         function initSIP() {
-            if (ua) { ua.stop(); }
+            try {
+                if (typeof JsSIP === 'undefined') {
+                    throw new Error('JsSIP library failed to load. Please check your internet connection or Home Assistant proxy settings.');
+                }
 
-            const serverIp = sipServerInput.value;
-            // From Asterisk config: WebRTC Endpoint is 200, Password is webrtc
-            const socket = new JsSIP.WebSocketInterface(`ws://${serverIp}:8088/ws`);
-            
-            const configuration = {
-                sockets: [socket],
-                uri: `sip:200@${serverIp}`,
-                password: 'webrtc',
-                // WebRTC requires register to receive incoming calls
-                register: true,
-                session_timers: false
-            };
+                if (ua) { ua.stop(); }
 
-            ua = new JsSIP.UA(configuration);
-
-            ua.on('connected', () => {
-                statusEl.textContent = 'Connected to Server';
-                statusEl.className = 'status connected';
-            });
-
-            ua.on('disconnected', () => {
-                statusEl.textContent = 'Disconnected';
-                statusEl.className = 'status disconnected';
-            });
-
-            ua.on('registered', () => {
-                statusEl.textContent = 'Registered (Ready to Call)';
-            });
-
-            // Handle Incoming Calls
-            ua.on('newRTCSession', (data) => {
-                const session = data.session;
+                const socket = new JsSIP.WebSocketInterface(`ws://${SERVER_IP}:8088/ws`);
                 
-                if (data.originator === 'local') return;
+                const configuration = {
+                    sockets: [socket],
+                    uri: `sip:200@${SERVER_IP}`,
+                    password: 'webrtc',
+                    // WebRTC requires register to receive incoming calls
+                    register: true,
+                    session_timers: false
+                };
 
-                console.log('Incoming call from: ', session.remote_identity.uri.toString());
-                
-                // Auto-answer incoming calls from the door phone
-                session.answer({
-                    mediaConstraints: { audio: true, video: true }
+                ua = new JsSIP.UA(configuration);
+
+                ua.on('connected', () => {
+                    statusEl.textContent = 'Connected to Server';
+                    statusEl.className = 'status connected';
                 });
 
-                handleSession(session);
-            });
+                ua.on('disconnected', (e) => {
+                    console.error('Disconnected:', e);
+                    statusEl.textContent = 'Disconnected (Check Asterisk port 8088)';
+                    statusEl.className = 'status disconnected';
+                });
 
-            ua.start();
+                ua.on('registered', () => {
+                    statusEl.textContent = 'Registered (Ready to Call)';
+                });
+
+                ua.on('registrationFailed', (e) => {
+                    console.error('Registration failed:', e);
+                    statusEl.textContent = 'Registration Failed';
+                    statusEl.className = 'status disconnected';
+                });
+
+                // Handle Incoming Calls
+                ua.on('newRTCSession', (data) => {
+                    const session = data.session;
+                    
+                    if (data.originator === 'local') return;
+
+                    console.log('Incoming call from: ', session.remote_identity.uri.toString());
+                    
+                    // Auto-answer incoming calls from the door phone
+                    session.answer({
+                        mediaConstraints: { audio: true, video: true }
+                    });
+
+                    handleSession(session);
+                });
+
+                ua.start();
+            } catch (err) {
+                console.error(err);
+                statusEl.textContent = 'Error: ' + err.message;
+                statusEl.className = 'status disconnected';
+            }
         }
 
         callBtn.addEventListener('click', () => {
-            if (!ua) {
-                alert('Please connect to the server first!');
+            if (!ua || !ua.isRegistered()) {
+                alert('Still connecting to server. Please wait or check status.');
                 return;
             }
-
-            const targetExt = document.getElementById('targetExt').value;
-            const serverIp = sipServerInput.value;
             
             const options = {
                 mediaConstraints: { audio: true, video: true }
             };
 
-            const session = ua.call(`sip:${targetExt}@${serverIp}`, options);
+            const session = ua.call(`sip:${TARGET_EXT}@${SERVER_IP}`, options);
             handleSession(session);
         });
 
@@ -241,7 +229,10 @@
             });
 
             session.on('ended', () => resetCallUI('Call Ended'));
-            session.on('failed', () => resetCallUI('Call Failed'));
+            session.on('failed', (e) => {
+                console.error('Call failed:', e);
+                resetCallUI('Call Failed');
+            });
 
             // Handle Remote Stream (Video/Audio from Door Phone)
             session.on('peerconnection', (e) => {
@@ -270,6 +261,8 @@
             remoteVideo.srcObject = null;
         }
 
+        // Initialize immediately without waiting for window.onload
+        initSIP();
     </script>
 </body>
 </html>
