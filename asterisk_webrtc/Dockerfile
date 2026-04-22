@@ -5,7 +5,6 @@ FROM $BUILD_FROM
 RUN apk add --no-cache \
     asterisk \
     asterisk-srtp \
-    asterisk-pjproject \
     asterisk-speex \
     bash \
     tzdata
